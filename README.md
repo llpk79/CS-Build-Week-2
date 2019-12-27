@@ -1,6 +1,6 @@
 # Lambda Treasure Hunt Player
 
-So far it just builds the map and picks up some treasures along the way.
+So far it builds the map, picks up treasures, and dons wearable items.
 
 ## To play:
 Start a test server found [here](https://github.com/LambdaSchool/Lambda-Treasure-Hunt--Test).
@@ -14,9 +14,9 @@ In the test server shell:
 Open another terminal window to do:
 - `$ python3 manage.py, runserver`
 
-In yet another terminal window:
+In a third terminal window:
 CD to this directory, start the pipenv shell, then:
-- `$ python3`
+- `$ python`
 - `>>> from play_it import GamePlayer`
 - `>>> game = GamePlayer()`
 - `>>> game.get_key()`
@@ -26,7 +26,7 @@ Return to test server shell:
 - `>>> p = Player.objects.all()`
 - `>>> p = p[len(p) - 1]  # -1 indexing doesn't work here.`
 - `>>> g = Group.objects.get(name='test')`
-_ `>>> p.group = g`
+- `>>> p.group = g`
 - `>>> p.save()`
 
 Back in this shell:
