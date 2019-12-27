@@ -16,6 +16,7 @@ Open another terminal window to do:
 
 In yet another terminal window:
 CD to this directory, start the pipenv shell, then:
+- `$ python3`
 - `>>> from play_it import GamePlayer`
 - `>>> game = GamePlayer()`
 - `>>> game.get_key()`
