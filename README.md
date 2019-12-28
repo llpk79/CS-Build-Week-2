@@ -12,7 +12,7 @@ In the test server shell:
 - `>>> from util import create_world`
 
 Open another terminal window to do:
-- `$ python3 manage.py, runserver`
+- `$ python3 manage.py runserver`
 
 In a third terminal window:
 CD to this directory, start the pipenv shell, then:
@@ -23,8 +23,7 @@ CD to this directory, start the pipenv shell, then:
 
 Return to test server shell:
 - `>>> from adventure.models import Game, Player`
-- `>>> p = Player.objects.all()`
-- `>>> p = p[len(p) - 1]  # -1 indexing doesn't work here.`
+- `>>> p = Player.objects.get(name='testuser')`
 - `>>> g = Group.objects.get(name='test')`
 - `>>> p.group = g`
 - `>>> p.save()`
@@ -32,3 +31,4 @@ Return to test server shell:
 Back in this shell:
 - `>>> game.initialize_player()`
 - `>>> game.traverse_map()`
+- `>>> game.auto_play()`
