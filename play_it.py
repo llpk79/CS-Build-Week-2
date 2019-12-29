@@ -25,8 +25,16 @@ class GamePlayer:
         self.gold = 0
         self.bodywear = None
         self.footwear = None
-        self.places = {'shop': None, 'shrine': {}, 'mine': None, 'transmogrifier': None, 'changer': None}
-        self.items = deque()
+        self.name_changed = False
+        self.flight = False
+        self.dash = False
+        self.items_ = deque()
+        self.places = {'shop': {'room_id': 1},
+                       'flight': {'room_id': 4},
+                       'dash': {'room_id': 5},
+                       'mine': {'room_id': None},
+                       'transmogrifier': {'room_id': 2},
+                       'name': {'room_id': 3}}
 
     def make_request(self, suffix: str, http: str, data: dict = None, header: dict = None) -> dict:
         """Make API request to game server, return json response."""
@@ -43,7 +51,7 @@ class GamePlayer:
 
         # Handle response.
         if 'cooldown' in response:
-            self.cooldown = int(response['cooldown'])
+            self.cooldown = float(response['cooldown'])
         if 'errors' in response:
             if response['errors']:
                 print(f'\nError: {response["errors"]}')
@@ -174,7 +182,7 @@ class GamePlayer:
                 self.take_path(more_to_explore)
                 print(f'{len(self.world)} rooms found!')
 
-    def move_to(self, target) -> list:
+    def find_path(self, target: int) -> list:
         """Create a path to a <target> room."""
         if self.current_room == target:
             return []
@@ -196,15 +204,12 @@ class GamePlayer:
                     queue.append(new_path)
 
     def save_place(self, room: dict) -> None:
-        description = room['description'].lower()
-        places = ['shop', 'shrine', 'mine', 'transmogrifier', 'changer']
+        description = room['title'].lower()
+        places = ['shop', 'dash', 'flight', 'transmogrifier', 'name']
         for place in places:
             if place in description:
-                if place == 'shrine':
-                    self.places['shrine'][int(room['room_id'])] = room
-                else:
-                    print(f'Added a place: {place} at {int(room["room_id"])}')
-                    self.places[place] = room
+                print(f'Added a place: {place} at {int(room["room_id"])}')
+                self.places[place] = room
 
     def move(self, direction: str, room: int = None) -> dict:
         """Move player in the given <direction>."""
@@ -216,7 +221,8 @@ class GamePlayer:
         new_room = self.make_request(suffix=suffix, header=self.auth, data=data, http='post')
         self.save_place(new_room)
         print(f'\nIn room {new_room["room_id"]}. \nCurrent cooldown: {self.cooldown}')
-        print(f'Items: {[item["name"] for item in self.items]}, '
+        print(f'Items: {[item["name"] for item in self.items_]}, '
+              f'\nPlaces: {[(x, y["room_id"]) for x, y in self.places.items() if y] }, '
               f'\nGold: {self.gold} \nStatus: {self.status_} \nEncumbrance: {self.encumbrance}')
         if new_room['items'] and not self.encumbered:
             for item in new_room['items']:
@@ -226,34 +232,51 @@ class GamePlayer:
     def auto_play(self):
         while True:
             if self.encumbered and self.places['shop']:
-                print('\nGoing to sell this treasure.', self.places['shop']['room_id'])
-                path = self.move_to(int(self.places['shop']['room_id']))
-                print('path', path)
-                # if path:
+                print('\nGoing to sell this treasure.')
+                path = self.find_path(int(self.places['shop']['room_id']))
                 self.take_path(path)
                 print('\nGot to the shop.')
                 self.sell()
+                self.status()
 
             else:
-                rand_room = random.randint(0, len(self.world))
+                rand_room = random.randint(0, len(self.world) - 1)
                 print(f'\nGoing to room {rand_room}.')
-                path = self.move_to(rand_room)
+                path = self.find_path(rand_room)
                 self.take_path(path)
                 print(f'\nGot to room {rand_room}.')
 
-            if self.places['shrine']:
-                for shrine in self.places['shrine']:
-                    path = self.move_to(shrine)
-                    print('\nGoing to pray.')
-                    self.take_path(path)
-                    print(f'\nGot to {shrine}.')
-                    self.pray()
+            if self.places['name'] and not self.name_changed and self.gold >= 1000:
+                print('\nGoing to ', int(self.places['name']['title']))
+                path = self.find_path(int(self.places['name']['room_id']))
+                self.take_path(path)
+                self.change_name()
+                self.name_changed = True
+                self.status()
+
+            if self.places['dash'] and self.name_changed and not self.dash:
+                path = self.find_path(int(self.places['dash']['room_id']))
+                print('\nGoing to ', int(self.places['dash']['title']))
+                self.take_path(path)
+                print(f'\nGot to {self.places["dash"]["title"]}.')
+                self.pray()
+                self.dash = True
+                self.status()
+
+            if self.places['flight'] and self.name_changed and not self.flight:
+                path = self.find_path(int(self.places['flight']['room_id']))
+                print('\nGoing to ', int(self.places['flight']['title']))
+                self.take_path(path)
+                print(f'\nGot to {self.places["flight"]["title"]}.')
+                self.pray()
+                self.flight = True
+                self.status()
 
     def take_n_wear(self, item, wear=False):
         suffix = 'api/adv/take/'
         data = {"name": f"{item['name']}"}
         response = self.make_request(suffix=suffix, http='post', data=data, header=self.auth)
-        self.items.append(item)
+        self.items_.append(item)
         self.encumbrance += item['weight']
         if wear:
             self.wear(item)
@@ -346,8 +369,8 @@ class GamePlayer:
 
     def sell(self) -> None:
         suffix = 'api/adv/sell'
-        while any([item['itemtype'] == 'TREASURE' for item in self.items]):
-            item = self.items.popleft()
+        while any([item['itemtype'] == 'TREASURE' for item in self.items_]):
+            item = self.items_.popleft()
             print(f'Trying to sell {item["name"]}')
             if item['itemtype'] == 'TREASURE':
                 data = {"name": item["name"]}
@@ -356,7 +379,7 @@ class GamePlayer:
                 self.make_request(suffix=suffix, data=data, header=self.auth, http='post')
                 self.status()
             else:
-                self.items.append(item)
+                self.items_.append(item)
 
     def status(self) -> dict:
         """Get the player's current status."""
@@ -375,7 +398,7 @@ class GamePlayer:
 
     def change_name(self) -> dict:
         suffix = 'api/adv/change_name/'
-        data = {"name": 'paulus'}
+        data = {"name": "paulus", "confirm": "aye"}
         response = self.make_request(suffix=suffix, data=data, header=self.auth, http='post')
         return response
 
@@ -392,6 +415,10 @@ class GamePlayer:
         pass
 
     def receive(self):
+        pass
+
+    def transmogrify(self):
+        suffix = 'api/adv/transmogrify/'
         pass
 
 
