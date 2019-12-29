@@ -1,6 +1,6 @@
 # Lambda Treasure Hunt Player
 
-So far it builds the map, picks up treasures, and dons wearable items.
+So far it builds and saves the map, picks up treasures, dons wearable items, sells treasure, changes name and prays at shrines.
 
 ## To play:
 Start a test server found [here](https://github.com/LambdaSchool/Lambda-Treasure-Hunt--Test).
@@ -11,7 +11,7 @@ Start a test server found [here](https://github.com/LambdaSchool/Lambda-Treasure
 In the test server shell:
 - `>>> from util import create_world`
 
-Open another terminal window to do:
+Open another terminal window, CD to the test directory, and do:
 - `$ python3 manage.py, runserver`
 
 In a third terminal window:
@@ -23,8 +23,7 @@ CD to this directory, start the pipenv shell, then:
 
 Return to test server shell:
 - `>>> from adventure.models import Game, Player`
-- `>>> p = Player.objects.all()`
-- `>>> p = p[len(p) - 1]  # -1 indexing doesn't work here.`
+- `>>> p = Player.objects.get(name='testuser')`
 - `>>> g = Group.objects.get(name='test')`
 - `>>> p.group = g`
 - `>>> p.save()`
@@ -32,3 +31,4 @@ Return to test server shell:
 Back in this shell:
 - `>>> game.initialize_player()`
 - `>>> game.traverse_map()`
+- `>>> game.auto_play()`
