@@ -12,7 +12,7 @@ In the test server shell:
 - `>>> from util import create_world`
 
 Open another terminal window, CD to the test directory, and do:
-- `$ python3 manage.py, runserver`
+- `$ python3 manage.py runserver`
 
 In a third terminal window:
 CD to this directory, start the pipenv shell, then:
