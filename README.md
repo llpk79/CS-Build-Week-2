@@ -1,6 +1,6 @@
 # Lambda Treasure Hunt Player
 
-So far it builds and saves the map, picks up treasures, dons wearable items, sells treasure, changes name and prays at shrines.
+So far it builds and saves the map, picks up treasures, dons wearable items, dashes to sell treasure, changes name and prays at shrines.
 
 ## To play:
 Start a test server found [here](https://github.com/LambdaSchool/Lambda-Treasure-Hunt--Test).

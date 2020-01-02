@@ -27,13 +27,13 @@ class GamePlayer:
         self.footwear = None
         self.name_changed = False
         self.flight = False
-        self.dash = False
+        self.dash_ = False
         self.items_ = deque()
         self.places = {'shop': {'room_id': 1},
-                       'flight': {'room_id': 4},
+                       'flight': {'room_id': None},
                        'dash': {'room_id': 5},
                        'mine': {'room_id': None},
-                       'transmogrifier': {'room_id': 2},
+                       'transmogrifier': {'room_id': None},
                        'name': {'room_id': 3}}
 
     def make_request(self, suffix: str, http: str, data: dict = None, header: dict = None) -> dict:
@@ -231,10 +231,13 @@ class GamePlayer:
 
     def auto_play(self):
         while True:
-            if self.encumbered and self.places['shop']:
+            if self.encumbered and self.places['shop']['room_id']:
                 print('\nGoing to sell this treasure.')
                 path = self.find_path(int(self.places['shop']['room_id']))
-                self.take_path(path)
+                if self.dash_:
+                    self.dash(path)
+                else:
+                    self.take_path(path)
                 print('\nGot to the shop.')
                 self.sell()
                 self.status()
@@ -246,28 +249,28 @@ class GamePlayer:
                 self.take_path(path)
                 print(f'\nGot to room {rand_room}.')
 
-            if self.places['name'] and not self.name_changed and self.gold >= 1000:
-                print('\nGoing to ', int(self.places['name']['title']))
+            if self.places['name']['room_id'] and not self.name_changed and self.gold >= 1000:
+                print('\nGoing to name.')
                 path = self.find_path(int(self.places['name']['room_id']))
                 self.take_path(path)
                 self.change_name()
                 self.name_changed = True
                 self.status()
 
-            if self.places['dash'] and self.name_changed and not self.dash:
+            if self.places['dash']['room_id'] and self.name_changed and not self.dash_:
+                print('\nGoing to dash')
                 path = self.find_path(int(self.places['dash']['room_id']))
-                print('\nGoing to ', int(self.places['dash']['title']))
                 self.take_path(path)
-                print(f'\nGot to {self.places["dash"]["title"]}.')
+                print(f'\nGot to dash.')
                 self.pray()
-                self.dash = True
+                self.dash_ = True
                 self.status()
 
-            if self.places['flight'] and self.name_changed and not self.flight:
+            if self.places['flight']['room_id'] and self.name_changed and not self.flight:
+                print('\nGoing to flight')
                 path = self.find_path(int(self.places['flight']['room_id']))
-                print('\nGoing to ', int(self.places['flight']['title']))
                 self.take_path(path)
-                print(f'\nGot to {self.places["flight"]["title"]}.')
+                print(f'\nGot to flight.')
                 self.pray()
                 self.flight = True
                 self.status()
@@ -294,7 +297,7 @@ class GamePlayer:
             if self.encumbrance + item_weight < self.strength:
                 self.take_n_wear(item_)
                 return
-        if item_type != 'TREASURE':
+        elif item_type != 'TREASURE':
             if item_type == 'FOOTWEAR':
                 if self.footwear and (self.encumbrance + (item_weight - self.footwear['weight']) < self.strength and
                                       int(item_['level']) > int(self.footwear['level'])):
@@ -388,9 +391,13 @@ class GamePlayer:
         self.speed = int(response['speed'])
         self.strength = int(response['strength'])
         self.encumbrance = int(response['encumbrance'])
-        if self.encumbrance < self.strength - 1:
+        if self.items_:
+            heaviest_item = max([item['weight'] for item in self.items_])
+        else:
+            heaviest_item = 1
+        if self.encumbrance < self.strength - heaviest_item:
             self.encumbered = False
-        elif self.encumbrance >= self.strength - 1:
+        elif self.encumbrance >= self.strength - heaviest_item:
             self.encumbered = True
         self.status_ = response['status']
         self.gold = response['gold']
@@ -402,8 +409,33 @@ class GamePlayer:
         response = self.make_request(suffix=suffix, data=data, header=self.auth, http='post')
         return response
 
-    def dash(self, room, route):
-        pass
+    def dash(self, path: list) -> None:
+        """Use the 'dash' ability to travel straight sections in one move."""
+        suffix = 'api/adv/dash/'
+        path = list(reversed(path))
+        start = path.pop()
+        start_room = start[0]
+        start_direction = start[1]
+        rooms = [start_room]
+        while path:
+            new = path.pop()
+            new_room = new[0]
+            new_direction = new[1]
+            if new_direction == start_direction:
+                rooms.append(new_room)
+            else:
+                data = {"direction": f"{start_direction}",
+                        "num_rooms": f"{len(rooms)}",
+                        "next_room_ids": f"{','.join(map(str, rooms))}"}
+                self.make_request(suffix=suffix, data=data, header=self.auth, http='post')
+                start_direction = new_direction
+                rooms = [new_room]
+        data = {"direction": f"{start_direction}",
+                "num_rooms": f"{len(rooms)}",
+                "next_room_ids": f"{','.join(map(str, rooms))}"}
+        self.make_request(suffix=suffix, data=data, header=self.auth, http='post')
+        self.current_room = rooms[-1]
+        self.status()
 
     def fly(self, room):
         pass
