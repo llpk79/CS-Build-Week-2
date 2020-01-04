@@ -1,9 +1,22 @@
 # Lambda Treasure Hunt Player
 
-So far it builds and saves the map, picks up treasures, dons wearable items, dashes to sell treasure, changes name and prays at shrines.
+- [x] Build and save the map 
+- [x] Pick up treasure
+- [x] Don wearable items
+- [x] Sell treasure
+- [x] Change name
+- [x] Pray at shrines
+- [x] Fly
+- [x] Dash
+
+To do:
+- [ ] Mine and proof
+- [ ] Transmogrify
+- [ ] Warp
+- [ ] Get golden snitches
 
 ## To play:
-Start a test server found [here](https://github.com/LambdaSchool/Lambda-Treasure-Hunt--Test).
+Start a [test server](https://github.com/LambdaSchool/Lambda-Treasure-Hunt--Test).
 - `$ python3 manage.py makemigrations`
 - `$ python3 manage.py migrate`
 - `$ python3 manage.py shell`
@@ -29,6 +42,4 @@ Return to test server shell:
 - `>>> p.save()`
 
 Back in this shell:
-- `>>> game.initialize_player()`
-- `>>> game.traverse_map()`
 - `>>> game.auto_play()`
