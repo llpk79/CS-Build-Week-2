@@ -4,18 +4,19 @@ import requests
 from collections import deque
 from datetime import datetime
 
-URL = 'http://localhost:8000/'
+URL = 'https://lambda-treasure-hunt.herokuapp.com/'
 
 
 class GamePlayer:
     """Plays the Lambda Treasure Hunt game."""
 
     def __init__(self):
-        self.key = None
-        self.auth = None
+        self.key = '1e255e28b47f9ce58a5d14a5a6d48ea7fa6e2599'
+        self.auth = {"Authorization": f"Token {self.key}",
+                     "Content-Type": "application/json"}
         self.cooldown = 0
         self.world = {}
-        self.current_room = 0
+        self.current_room = None
         self.then = datetime.now()
         self.strength = 0
         self.encumbrance = 0
@@ -29,12 +30,13 @@ class GamePlayer:
         self.flight = False
         self.dash_ = False
         self.items_ = deque()
-        self.places = {'shop': {'room_id': 1},
-                       'flight': {'room_id': 4},
-                       'dash': {'room_id': 5},
+        self.places = {'shop': {'room_id': None},
+                       'flight': {'room_id': None},
+                       'dash': {'room_id': None},
                        'mine': {'room_id': None},
-                       'transmogrifier': {'room_id': None},
-                       'name': {'room_id': 3}}
+                       'transmog': {'room_id': None},
+                       'pirate': {'room_id': None},  # Name change
+                       'well': {'room_id': None}}
 
     def make_request(self, suffix: str, http: str, data: dict = None, header: dict = None) -> dict:
         """Make API request to game server, return json response."""
@@ -79,6 +81,7 @@ class GamePlayer:
         """Create player in server database and initialize world map."""
         header = {"Authorization": f"Token {self.key}"}
         response = self.make_request(suffix='api/adv/init/', header=header, http='get')
+        self.current_room = response['room_id']
         self.world[self.current_room] = {'meta': response,
                                          'to_n': None,
                                          'to_w': None,
@@ -197,6 +200,7 @@ class GamePlayer:
                     new_path = [*path, (new_room, exit_)]
                     if new_room == target:
                         return new_path[1:]
+                    # TODO: don't add if new_room is a trap? Could prevent any path being found...
                     queue.append(new_path)
 
     def take_path(self, path: list) -> None:
@@ -233,7 +237,7 @@ class GamePlayer:
         # Print status info.
         print(f'\nIn room {new_room["room_id"]}. \nCurrent cooldown: {self.cooldown}')
         print(f'Items: {[item["name"] for item in self.items_]}, '
-              f'\nPlaces: {[(x, y["room_id"]) for x, y in self.places.items() if y] }, '
+              f'\nPlaces: {[(x, y["room_id"]) for x, y in self.places.items() if y]}, '
               f'\nGold: {self.gold} \nStatus: {self.status_} \nEncumbrance: {self.encumbrance}, Strength: {self.strength}')
         # Pick up items if we can.
         if new_room['items'] and not self.encumbered:
@@ -249,6 +253,7 @@ class GamePlayer:
 
     def play(self) -> None:
         """Go to random rooms to find treasure, sell when encumbered, and pray if able. Do it forever."""
+        # TODO: Add stops at wishing well, mine and transmog.
         while True:
             # Sell treasure if encumbered.
             if self.encumbered and self.places['shop']['room_id']:
@@ -269,7 +274,7 @@ class GamePlayer:
                 self.take_path(path)
                 print(f'\nGot to room {rand_room}.')
             # Change name if not already done.
-            if self.places['name']['room_id'] and not self.name_changed and self.gold >= 1000:
+            if self.places['pirate']['room_id'] and not self.name_changed and self.gold >= 1000:
                 print('\nGoing to name.')
                 path = self.find_path(int(self.places['name']['room_id']))
                 self.take_path(path)
