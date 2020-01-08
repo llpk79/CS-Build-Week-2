@@ -1,52 +1,60 @@
 import pickle
 import random
+import re
 import requests
 from collections import deque
+from cpu import CPU
 from datetime import datetime
+from hashlib import sha256
 
-URL = 'http://localhost:8000/'
-
+URL = 'https://lambda-treasure-hunt.herokuapp.com/'
+# URL = 'http://localhost:8000/'
 
 class GamePlayer:
     """Plays the Lambda Treasure Hunt game."""
 
     def __init__(self):
-        self.key = None
-        self.auth = None
+        self.key = '1e255e28b47f9ce58a5d14a5a6d48ea7fa6e2599'
+        # self.key = None
+        self.auth = {"Authorization": f"Token {self.key}",
+                     "Content-Type": "application/json"}
         self.cooldown = 0
         self.world = {}
-        self.current_room = 0
+        self.current_room = None
         self.then = datetime.now()
         self.strength = 0
         self.encumbrance = 0
         self.encumbered = False
         self.speed = 0
+        self.balance_ = 0
         self.status_ = []
         self.gold = 0
         self.bodywear = None
         self.footwear = None
-        self.name_changed = False
-        self.flight = False
-        self.dash_ = False
+        self.name_changed = True
+        self.flight = True
+        self.dash_ = True
         self.items_ = deque()
         self.places = {'shop': {'room_id': 1},
-                       'flight': {'room_id': 4},
-                       'dash': {'room_id': 5},
+                       'flight': {'room_id': 22},
+                       'dash': {'room_id': 461},
                        'mine': {'room_id': None},
-                       'transmogrifier': {'room_id': None},
-                       'name': {'room_id': 3}}
+                       'transmog': {'room_id': None},
+                       'pirate': {'room_id': 467},  # Name change
+                       'well': {'room_id': 55}}
 
     def make_request(self, suffix: str, http: str, data: dict = None, header: dict = None) -> dict:
         """Make API request to game server, return json response."""
         # Wait for cooldown period to expire.
-        while (datetime.now() - self.then).seconds < self.cooldown + .001:
+        while (datetime.now() - self.then).seconds < self.cooldown + .1:
             pass
         if http == 'get':
             response = requests.get(URL + suffix, headers=header, data=data)
         elif http == 'post':
             response = requests.post(URL + suffix, headers=header, json=data)
 
-        response.raise_for_status()  # If status 4xx or 5xx, raise error.
+        if response.raise_for_status():  # If status 4xx or 5xx, raise error.
+            self.auto_play()
         response = response.json()
 
         # Handle response.
@@ -79,11 +87,13 @@ class GamePlayer:
         """Create player in server database and initialize world map."""
         header = {"Authorization": f"Token {self.key}"}
         response = self.make_request(suffix='api/adv/init/', header=header, http='get')
-        self.world[self.current_room] = {'meta': response,
-                                         'to_n': None,
-                                         'to_w': None,
-                                         'to_s': None,
-                                         'to_e': None}
+        self.current_room = response['room_id']
+        if self.current_room not in self.world:
+            self.world[self.current_room] = {'meta': response,
+                                             'to_n': None,
+                                             'to_w': None,
+                                             'to_s': None,
+                                             'to_e': None}
         # Save player variables locally.
         self.status()
         print(f'\nIn room {self.current_room}')
@@ -157,7 +167,10 @@ class GamePlayer:
 
             # Take the first open path.
             open_exit = open_exits[0]
-            new_room = self.move(open_exit)
+            fly = True
+            if self.world[self.current_room]['meta']['terrain'] == "CAVE":
+                fly = False
+            new_room = self.move(open_exit, fly=fly)
             new_room_id = int(new_room['room_id'])
 
             # Mark new rooms and connections on our map.
@@ -197,6 +210,7 @@ class GamePlayer:
                     new_path = [*path, (new_room, exit_)]
                     if new_room == target:
                         return new_path[1:]
+                    # TODO: don't add if new_room is a trap? Could prevent any path being found...
                     queue.append(new_path)
 
     def take_path(self, path: list) -> None:
@@ -233,8 +247,9 @@ class GamePlayer:
         # Print status info.
         print(f'\nIn room {new_room["room_id"]}. \nCurrent cooldown: {self.cooldown}')
         print(f'Items: {[item["name"] for item in self.items_]}, '
-              f'\nPlaces: {[(x, y["room_id"]) for x, y in self.places.items() if y] }, '
-              f'\nGold: {self.gold} \nStatus: {self.status_} \nEncumbrance: {self.encumbrance}, Strength: {self.strength}')
+              f'\nPlaces: {[(x, y["room_id"]) for x, y in self.places.items() if y]}, '
+              f'\nGold: {self.gold} Lambda Coins: {self.balance_}'
+              f'\nEncumbrance: {self.encumbrance}, Strength: {self.strength}')
         # Pick up items if we can.
         if new_room['items'] and not self.encumbered:
             for item in new_room['items']:
@@ -243,12 +258,13 @@ class GamePlayer:
 
     def auto_play(self) -> None:
         """Helper function for starting game."""
-        self.initialize_player()
         self.load_map()
+        self.initialize_player()
         self.play()
 
     def play(self) -> None:
         """Go to random rooms to find treasure, sell when encumbered, and pray if able. Do it forever."""
+        # TODO: Add stops at transmog.
         while True:
             # Sell treasure if encumbered.
             if self.encumbered and self.places['shop']['room_id']:
@@ -262,16 +278,16 @@ class GamePlayer:
                 self.sell()
                 self.status()
             # Go to a random room to collect treasure along the way.
-            else:
+            if not self.encumbered:
                 rand_room = random.randint(0, len(self.world) - 1)
                 print(f'\nGoing to room {rand_room}.')
                 path = self.find_path(rand_room)
                 self.take_path(path)
                 print(f'\nGot to room {rand_room}.')
             # Change name if not already done.
-            if self.places['name']['room_id'] and not self.name_changed and self.gold >= 1000:
-                print('\nGoing to name.')
-                path = self.find_path(int(self.places['name']['room_id']))
+            if self.places['pirate']['room_id'] and not self.name_changed and self.gold >= 1000:
+                print('\nGoing to pirate.')
+                path = self.find_path(int(self.places['pirate']['room_id']))
                 self.take_path(path)
                 self.change_name()
                 self.name_changed = True
@@ -294,6 +310,16 @@ class GamePlayer:
                 self.pray()
                 self.flight = True
                 self.status()
+            # Mine lambda a coin before selling treasure.
+            if self.encumbered and self.places['well']['room_id'] and self.name_changed:
+                print('Going to wishing well...')
+                path = self.find_path(int(self.places['well']['room_id']))
+                self.dash(path)
+                print('Got to the wishing well.')
+                self.wish()
+                path = self.find_path(int(self.places['mine']['room_id']))
+                self.dash(path)
+                self.proof()
 
     def take(self, item: str) -> None:
         """Take <item> from current room if weight limit won't be exceeded."""
@@ -471,6 +497,22 @@ class GamePlayer:
         self.current_room = rooms[-1]
         self.status()
 
+    def wish(self):
+        response = self.examine('WELL')
+        code = response['description'].split('\n')
+        with open('clue.ls8', 'w') as f:
+            for line in code[2:]:
+                f.write(line)
+                f.write('\n')
+        cpu = CPU()
+        cpu.load()
+        cpu.run()
+        next_string = cpu.next_room
+        room = re.search(r'\d+', next_string)
+        next_room = int(room.group(0))
+        print(f'\nMine found: {next_room}')
+        self.places['mine']['room_id'] = next_room
+
     def warp(self):
         pass
 
@@ -485,12 +527,41 @@ class GamePlayer:
         pass
 
     def proof(self):
+        """Retrieve last proof from mine."""
         suffix = 'api/bc/last_proof/'
-        pass
+        auth = {'Authorization': f"Token {self.key}"}
+        response = self.make_request(suffix=suffix, header=auth, http='get')
+        last_proof = response['proof']
+        difficulty = response['difficulty']
+        self.new_proof(last_proof, difficulty)
 
-    def mine(self):
+    def new_proof(self, last_proof, difficulty):
+        """Generate new proof to mine new block."""
+        x = 0
+        print(f'Finding proof...\nlast_proof: {last_proof}, difficulty: {difficulty}')
+        while True:
+            string = (str(last_proof) + str(x)).encode()
+            hash_ = sha256(string).hexdigest()
+            if hash_[:difficulty] == '0' * difficulty:
+
+                print(f'Submitting proof: {x}')
+                return self.mine(x)
+            x += 1
+
+    def mine(self, new_proof):
         suffix = 'api/bc/mine/'
-        pass
+        data = {"proof": new_proof}
+        response = self.make_request(suffix=suffix, data=data, header=self.auth, http='post')
+        self.balance()
+        return response
+
+    def balance(self):
+        suffix = 'api/bc/get_balance/'
+        auth = {"Authorization": f"Token {self.key}"}
+        response = self.make_request(suffix=suffix, header=auth, http='get')
+        message = response['messages']
+        balance = re.search(r'\d+', *message)
+        self.balance_ = int(balance.group(0))
 
 
 if __name__ == '__main__':
