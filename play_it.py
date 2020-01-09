@@ -29,19 +29,24 @@ class GamePlayer:
         self.balance_ = 0
         self.status_ = []
         self.gold = 0
+        self.snitches = 0
         self.bodywear = None
         self.footwear = None
         self.name_changed = True
         self.flight = True
         self.dash_ = True
+        self.warp_ = True
+        self.warped = False
         self.items_ = deque()
         self.places = {'shop': {'room_id': 1},
                        'flight': {'room_id': 22},
                        'dash': {'room_id': 461},
                        'mine': {'room_id': None},
-                       'transmog': {'room_id': None},
+                       'transmog': {'room_id': 495},
                        'pirate': {'room_id': 467},  # Name change
-                       'well': {'room_id': 55}}
+                       'well': {'room_id': 55},
+                       'warp': {'room_id': 374},
+                       'warp_well': {'room_id': 555}}
 
     def make_request(self, suffix: str, http: str, data: dict = None, header: dict = None) -> dict:
         """Make API request to game server, return json response."""
@@ -53,8 +58,7 @@ class GamePlayer:
         elif http == 'post':
             response = requests.post(URL + suffix, headers=header, json=data)
 
-        if response.raise_for_status():  # If status 4xx or 5xx, raise error.
-            self.auto_play()
+        response.raise_for_status()
         response = response.json()
 
         # Handle response.
@@ -248,7 +252,7 @@ class GamePlayer:
         print(f'\nIn room {new_room["room_id"]}. \nCurrent cooldown: {self.cooldown}')
         print(f'Items: {[item["name"] for item in self.items_]}, '
               f'\nPlaces: {[(x, y["room_id"]) for x, y in self.places.items() if y]}, '
-              f'\nGold: {self.gold} Lambda Coins: {self.balance_}'
+              f'\nGold: {self.gold}, Lambda Coins: {self.balance_}, Snitches: {self.snitches}'
               f'\nEncumbrance: {self.encumbrance}, Strength: {self.strength}')
         # Pick up items if we can.
         if new_room['items'] and not self.encumbered:
@@ -262,89 +266,152 @@ class GamePlayer:
         self.initialize_player()
         self.play()
 
+    def sell_things(self):
+        print('\nGoing to sell this treasure.')
+        path = self.find_path(int(self.places['shop']['room_id']))
+        if self.dash_:
+            self.dash(path)
+        else:
+            self.take_path(path)
+        print('\nGot to the shop.')
+        self.sell()
+        self.status()
+
+    def rand_room(self):
+        start, end = 0, 499
+        if self.warped:
+            start, end = 500, 999
+        rand_room = random.randint(start, end)
+        print(f'\nGoing to room {rand_room}.')
+        path = self.find_path(rand_room)
+        self.take_path(path)
+        print(f'\nGot to room {rand_room}.')
+
+    def name_change(self):
+        print('\nGoing to pirate.')
+        path = self.find_path(int(self.places['pirate']['room_id']))
+        self.take_path(path)
+        self.change_name()
+        self.name_changed = True
+        self.status()
+
+    def to_dash(self):
+        print('\nGoing to dash')
+        path = self.find_path(int(self.places['dash']['room_id']))
+        self.take_path(path)
+        print(f'\nGot to dash.')
+        self.pray()
+        self.dash_ = True
+        self.status()
+
+    def to_flight(self):
+        print('\nGoing to flight')
+        path = self.find_path(int(self.places['flight']['room_id']))
+        self.take_path(path)
+        print(f'\nGot to flight.')
+        self.pray()
+        self.flight = True
+        self.status()
+
+    def to_warp(self):
+        print('\nGoing to warp...')
+        path = self.find_path(self.places['warp']['room_id'])
+        self.dash(path)
+        print('Got to warp shrine.')
+        self.pray()
+        self.warp_ = True
+        self.status()
+
+    def dimensional_traveler(self):
+        print('Warping...')
+        self.warp()
+        self.initialize_player()
+        print('Going to well...')
+        path = self.find_path(self.places['warp_well']['room_id'])
+        self.dash(path)
+        print('Wishing...')
+        self.wish()
+        print('Going to snitch...')
+        path = self.find_path(int(self.places['mine']['room_id']))
+        self.dash(path)
+        self.take('golden snitch')
+        self.warp()
+        self.initialize_player()
+
+    def coin_dash(self):
+        """Dash to the well, then the mine, and mine a coin."""
+        print('Going to wishing well...')
+        path = self.find_path(int(self.places['well']['room_id']))
+        self.dash(path)
+        print('Got to the wishing well.')
+        self.wish()
+        print('Going to the mine...')
+        path = self.find_path(int(self.places['mine']['room_id']))
+        self.dash(path)
+        print('Got to the mine.')
+        self.proof()
+
     def play(self) -> None:
-        """Go to random rooms to find treasure, sell when encumbered, and pray if able. Do it forever."""
-        # TODO: Add stops at transmog.
+        """Go to random rooms to find treasure, sell when encumbered, and pray if able, mine coins, find snitches.
+
+         Do it forever.
+         """
         while True:
-            # Sell treasure if encumbered.
-            if self.encumbered and self.places['shop']['room_id']:
-                print('\nGoing to sell this treasure.')
-                path = self.find_path(int(self.places['shop']['room_id']))
-                if self.dash_:
-                    self.dash(path)
-                else:
-                    self.take_path(path)
-                print('\nGot to the shop.')
-                self.sell()
-                self.status()
-            # Go to a random room to collect treasure along the way.
+            # Go to a random rooms to collect treasure until you can carry no more.
             if not self.encumbered:
-                rand_room = random.randint(0, len(self.world) - 1)
-                print(f'\nGoing to room {rand_room}.')
-                path = self.find_path(rand_room)
-                self.take_path(path)
-                print(f'\nGot to room {rand_room}.')
+                self.rand_room()
             # Change name if not already done.
             if self.places['pirate']['room_id'] and not self.name_changed and self.gold >= 1000:
-                print('\nGoing to pirate.')
-                path = self.find_path(int(self.places['pirate']['room_id']))
-                self.take_path(path)
-                self.change_name()
-                self.name_changed = True
-                self.status()
+                self.name_change()
             # Pray at the dash shrine once.
             if self.places['dash']['room_id'] and self.name_changed and not self.dash_:
-                print('\nGoing to dash')
-                path = self.find_path(int(self.places['dash']['room_id']))
-                self.take_path(path)
-                print(f'\nGot to dash.')
-                self.pray()
-                self.dash_ = True
-                self.status()
+                self.to_dash()
             # Pray at the flight shrine once.
             if self.places['flight']['room_id'] and self.name_changed and not self.flight:
-                print('\nGoing to flight')
-                path = self.find_path(int(self.places['flight']['room_id']))
-                self.take_path(path)
-                print(f'\nGot to flight.')
-                self.pray()
-                self.flight = True
-                self.status()
+                self.to_flight()
+            # Pray at the warp shrine once.
+            if self.places['warp']['room_id'] and self.name_changed and not self.warp:
+                self.to_warp()
+            # Go get a golden snitch.
+            if self.encumbered and self.warp_:
+                self.dimensional_traveler()
             # Mine lambda a coin before selling treasure.
             if self.encumbered and self.places['well']['room_id'] and self.name_changed:
-                print('Going to wishing well...')
-                path = self.find_path(int(self.places['well']['room_id']))
-                self.dash(path)
-                print('Got to the wishing well.')
-                self.wish()
-                path = self.find_path(int(self.places['mine']['room_id']))
-                self.dash(path)
-                self.proof()
+                self.coin_dash()
+            # Sell treasure.
+            if self.encumbered and self.places['shop']['room_id']:
+                self.sell_things()
 
     def take(self, item: str) -> None:
         """Take <item> from current room if weight limit won't be exceeded."""
         print(f'\nYou found {item}')
         item_ = self.examine(item)
-        item_weight = int(item_['weight'])
-        item_type = item_['itemtype']
-        if item_type == 'TREASURE':
-            # Make sure item doesn't exceed weight limit.
-            if self.encumbrance + item_weight < self.strength:
-                self.take_n_wear(item_)
-                return
-        elif item_type != 'TREASURE':
-            if item_type == 'FOOTWEAR':
+        if self.warped:
+            suffix = 'api/adv/take/'
+            data = {"name": "golden snitch"}
+            self.make_request(suffix=suffix, data=data, header=self.auth, http='post')
+            return
+        if not self.warped:
+            item_weight = int(item_['weight'])
+            item_type = item_['itemtype']
+            if item_type == 'TREASURE':
                 # Make sure item doesn't exceed weight limit.
-                if self.footwear and (self.encumbrance + (item_weight - self.footwear['weight']) < self.strength):
-                    self.take_n_wear(item_, wear=True)
-                elif not self.footwear:
-                    self.take_n_wear(item_, wear=True)
-            if item_type == 'BODYWEAR':
-                # Make sure item doesn't exceed weight limit.
-                if self.bodywear and (self.encumbrance + (item_weight - self.bodywear['weight']) < self.strength):
-                    self.take_n_wear(item_, wear=True)
-                elif not self.bodywear:
-                    self.take_n_wear(item_, wear=True)
+                if self.encumbrance + item_weight < self.strength:
+                    self.take_n_wear(item_)
+                    return
+            elif item_type != 'TREASURE':
+                if item_type == 'FOOTWEAR':
+                    # Make sure item doesn't exceed weight limit.
+                    if self.footwear and (self.encumbrance + (item_weight - self.footwear['weight']) < self.strength):
+                        self.take_n_wear(item_, wear=True)
+                    elif not self.footwear:
+                        self.take_n_wear(item_, wear=True)
+                if item_type == 'BODYWEAR':
+                    # Make sure item doesn't exceed weight limit.
+                    if self.bodywear and (self.encumbrance + (item_weight - self.bodywear['weight']) < self.strength):
+                        self.take_n_wear(item_, wear=True)
+                    elif not self.bodywear:
+                        self.take_n_wear(item_, wear=True)
 
     def take_n_wear(self, item: dict, wear: bool = False) -> dict:
         """Take item, call wear() if item is wearable."""
@@ -459,6 +526,7 @@ class GamePlayer:
             self.encumbered = True
         self.status_ = response['status']
         self.gold = response['gold']
+        self.snitches = response['snitches']
         return response
 
     def change_name(self) -> dict:
@@ -514,7 +582,10 @@ class GamePlayer:
         self.places['mine']['room_id'] = next_room
 
     def warp(self):
-        pass
+        suffix = 'api/adv/warp/'
+        response = self.make_request(suffix=suffix, header=self.auth, http='post')
+        self.warped = not self.warped
+        return response
 
     def carry(self):
         pass
@@ -522,9 +593,11 @@ class GamePlayer:
     def receive(self):
         pass
 
-    def transmogrify(self):
+    def transmogrify(self, item):
         suffix = 'api/adv/transmogrify/'
-        pass
+        data = {"name": item}
+        response = self.make_request(suffix=suffix, data=data, header=self.auth, http='post')
+        return response
 
     def proof(self):
         """Retrieve last proof from mine."""
@@ -543,9 +616,9 @@ class GamePlayer:
             string = (str(last_proof) + str(x)).encode()
             hash_ = sha256(string).hexdigest()
             if hash_[:difficulty] == '0' * difficulty:
-
                 print(f'Submitting proof: {x}')
-                return self.mine(x)
+                self.mine(x)
+                break
             x += 1
 
     def mine(self, new_proof):
