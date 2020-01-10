@@ -18,6 +18,7 @@ class GamePlayer:
     >>> game = GamePlayer()
     >>> game.auto_play()
 
+    See __init__ for important info on initializing player after server disconnect.
     """
 
     def __init__(self):
@@ -37,37 +38,47 @@ class GamePlayer:
         self.snitches = 0
         self.bodywear = None
         self.footwear = None
-        # Ensure the following variables match server state after a connection loss.
-        # They are not updated with calls to self.status or initialize_player.        self.name_changed = False
-        self.flight = False
-        self.dash_ = False
-        self.warp_ = False
         self.warped = False
+        # Ensure the following variables match server state after a connection loss.
+        # They are not updated with calls to self.status or initialize_player.
+        self.flight = True
+        self.dash_ = True
+        self.warp_ = True
+        self.name_changed = True
         self.items_ = deque()
-        self.places = {'shop': {'room_id': None},
-                       'flight': {'room_id': None},
-                       'dash': {'room_id': None},
+        self.places = {'shop': {'room_id': 1},
+                       'flight': {'room_id': 22},
+                       'dash': {'room_id': 461},
                        'mine': {'room_id': None},
                        'transmog': {'room_id': None},
-                       'pirate': {'room_id': None},  # Name change
-                       'well': {'room_id': None},
+                       'pirate': {'room_id': 467},  # Name change
+                       'well': {'room_id': 55},
                        'warp': {'room_id': None},
-                       'warp_well': {'room_id': None}}
+                       'warp_well': {'room_id': 555}}
 
-    def make_request(self, suffix: str, http: str, data: dict = None, header: dict = None) -> dict:
+    def make_request(self,
+                     suffix: str,
+                     data: dict = None,
+                     header: dict = None,
+                     http: str = None) -> dict:
         """Make API request to game server, return dict response."""
         # Wait for cooldown period to expire.
         while (datetime.now() - self.then).seconds < self.cooldown + .1:
             pass
-        if http == 'get':
-            response = requests.get(URL + suffix, headers=header, data=data)
-        elif http == 'post':
-            response = requests.post(URL + suffix, headers=header, json=data)
-
-        response.raise_for_status()
+        try:
+            if http == 'get':
+                response = requests.get(URL + suffix, headers=header, data=data)
+            elif http == 'post':
+                response = requests.post(URL + suffix, headers=header, json=data)
+        except response.raise_for_status():  # Raise for 4xx or 5xx response.
+            self.auto_play()
         response = response.json()
+        self.handle_response(response)
+        self.then = datetime.now()  # Reset timer.
+        return response
 
-        # Handle response.
+    def handle_response(self, response: dict) -> None:
+        """Do things with <response> from API request."""
         if 'cooldown' in response:
             self.cooldown = float(response['cooldown'])
         if 'errors' in response:
@@ -77,27 +88,22 @@ class GamePlayer:
             if response['messages']:
                 print(f'\n{" ".join(response["messages"])}')
 
-        self.then = datetime.now()  # Reset timer.
-        return response
-
     def initialize_player(self) -> None:
         """Create player in server database and initialize world map."""
         header = {"Authorization": f"Token {self.key}"}
-        response = self.make_request(suffix='api/adv/init/', header=header, http='get')
-        self.current_room = response['room_id']
+        new_room = self.make_request(suffix='api/adv/init/', header=header, http='get')
+        self.current_room = new_room['room_id']
         # If current room hasn't been saved to self.world, do that.
         if self.current_room not in self.world:
-            self.world[self.current_room] = {'meta': response,
+            self.world[self.current_room] = {'meta': new_room,
                                              'to_n': None,
                                              'to_w': None,
                                              'to_s': None,
                                              'to_e': None}
-        # Save player variables locally.
         self.status()
-        print(f'\nIn room {self.current_room}')
-        if 'items' in response:
-            for item in response['items']:
-                self.take(item)
+        self.balance()
+        self.find_items(new_room)
+        self.print_status_info(new_room)
         return
 
     def load_map(self) -> None:
@@ -107,12 +113,11 @@ class GamePlayer:
             with open('world.pickle', 'rb') as f:
                 self.world = pickle.load(f)
             print('Map complete!\n')
-
         except FileNotFoundError:
             self._traverse_map()
 
     def _traverse_map(self) -> None:
-        """Do a DFS to dead-end, BFS to an unexplored exit to create world map. Save map to file."""
+        """Do a DFS to dead-end, BFS to a room with an unexplored exit to create world map. Save map to disc."""
         print('\nBuilding map...')
         while True:
             # Move to a dead-end.
@@ -141,7 +146,6 @@ class GamePlayer:
         queue = deque()
         path = (self.current_room, '')
         queue.append([path])
-
         while queue:
             # Get the last room from a path in the queue.
             path = queue.popleft()
@@ -164,14 +168,11 @@ class GamePlayer:
         rev_dir = {'n': 's', 'w': 'e', 's': 'n', 'e': 'w'}
         while True:
             exits = self.get_exits(self.current_room)
-
             # If we've explored all exits, return.
             if all([self.world[self.current_room][f'to_{exit_}'] is not None for exit_ in exits]):
                 return
-
             # Get all unexplored exits.
             open_exits = [d for d in exits if self.world[self.current_room][f'to_{d}'] is None]
-
             # Take the first open path.
             open_exit = open_exits[0]
             fly = True
@@ -179,7 +180,6 @@ class GamePlayer:
                 fly = False
             new_room = self.move(open_exit, fly=fly)
             new_room_id = int(new_room['room_id'])
-
             # Mark new rooms and connections on our map.
             if new_room_id not in self.world:
                 self.world[new_room_id] = {'meta': new_room,
@@ -189,12 +189,10 @@ class GamePlayer:
                                            'to_e': None}
             self.world[self.current_room][f'to_{open_exit}'] = new_room_id
             self.world[new_room_id][f'to_{rev_dir[open_exit]}'] = self.current_room
-
             # Mark all non-exits.
             for exit_ in ['n', 'w', 's', 'e']:
                 if exit_ not in exits:
                     self.world[self.current_room][f'to_{exit_}'] = False
-
             # Update our current place in the map.
             self.current_room = new_room_id
 
@@ -243,10 +241,13 @@ class GamePlayer:
                 print(f'Added a place: {place} at {int(room["room_id"])}')
                 self.places[place] = room
 
-    def move(self, direction: str, room: int = None, fly: bool = False) -> dict:
+    def move(self,
+             direction: str,
+             room: int = None,
+             fly: bool = False) -> dict:
         """Move player in the given <direction>. Fly if able."""
-        # Get cooldown bonus of being a wise explorer by supplying a <room>.
         if room is not None:
+            # Get 'wise explorer' cooldown bonus by supplying a <room>.
             data = {"direction": f'{direction}', "next_room_id": f"{room}"}
         else:
             data = {"direction": f'{direction}'}
@@ -254,18 +255,24 @@ class GamePlayer:
         if fly:
             suffix = 'api/adv/fly/'
         new_room = self.make_request(suffix=suffix, header=self.auth, data=data, http='post')
+        self.print_status_info(new_room)
         self.save_place(new_room)
-        # Print status info.
-        print(f'\nIn room {new_room["room_id"]}. \nCurrent cooldown: {self.cooldown}')
-        print(f'Items: {[item["name"] for item in self.items_]}, '
-              f'\nPlaces: {[(x, y["room_id"]) for x, y in self.places.items() if y]}, '
-              f'\nGold: {self.gold}, Lambda Coins: {self.balance_}, Snitches: {self.snitches}'
-              f'\nEncumbrance: {self.encumbrance}, Strength: {self.strength}')
-        # Pick up items if we can.
+        self.find_items(new_room)
+        return new_room
+
+    def find_items(self, new_room: dict) -> None:
+        """Pick up items if we can."""
         if new_room['items'] and not self.encumbered:
             for item in new_room['items']:
                 self.take(item)
-        return new_room
+
+    def print_status_info(self, current_room: dict) -> None:
+        """Print out info about player and <current room>."""
+        print(f'\nIn room {current_room["room_id"]}. \nCurrent cooldown: {self.cooldown}'
+              f'\nInventory: {", ".join([item["name"][:-9] for item in self.items_])} '
+              f'\nPlayers in room: {", ".join(current_room["players"] if current_room["players"] else "None")} '
+              f'\nGold: {self.gold}, Lambda Coins: {self.balance_}, Snitches: {self.snitches}'
+              f'\nEncumbrance: {self.encumbrance}, Strength: {self.strength}')
 
     def auto_play(self) -> None:
         """Helper function for starting game."""
@@ -273,7 +280,7 @@ class GamePlayer:
         self.initialize_player()
         self.play()
 
-    def sell_things(self):
+    def sell_things(self) -> None:
         """Move to the shop and sell all the treasure."""
         print('\nGoing to sell this treasure.')
         path = self.find_path(int(self.places['shop']['room_id']))
@@ -298,16 +305,17 @@ class GamePlayer:
 
     def name_change(self) -> None:
         """Go to the name changing pirate and get your true name."""
-        print('\nGoing to pirate.')
+        print('\nGoing to pirate...')
         path = self.find_path(int(self.places['pirate']['room_id']))
         self.take_path(path)
+        print('\nGot to pirate.')
         self.change_name()
         self.name_changed = True
         self.status()
 
     def to_dash(self) -> None:
         """Go to the dash shrine and pray."""
-        print('\nGoing to dash')
+        print('\nGoing to dash...')
         path = self.find_path(int(self.places['dash']['room_id']))
         self.take_path(path)
         print(f'\nGot to dash.')
@@ -317,7 +325,7 @@ class GamePlayer:
 
     def to_flight(self) -> None:
         """Go to the flight shrine and pray."""
-        print('\nGoing to flight')
+        print('\nGoing to flight...')
         path = self.find_path(int(self.places['flight']['room_id']))
         self.take_path(path)
         print(f'\nGot to flight.')
@@ -330,23 +338,23 @@ class GamePlayer:
         print('\nGoing to warp...')
         path = self.find_path(self.places['warp']['room_id'])
         self.dash(path)
-        print('Got to warp shrine.')
+        print('\nGot to warp shrine.')
         self.pray()
         self.warp_ = True
         self.status()
 
     def dimensional_traveler(self) -> None:
         """Warp to alternate dimension, find well, decode clue, go grab snitch, warp back to reality."""
-        print('Warping...')
+        print('\nWarping...')
         self.warp()
         # Make sure self.current_room is correct.
         self.initialize_player()
-        print('Going to well...')
+        print('\nGoing to well...\n')
         path = self.find_path(self.places['warp_well']['room_id'])
         self.dash(path)
-        print('Wishing...')
+        print('\nWishing...')
         self.wish()
-        print('Going to snitch...')
+        print('\nGoing to snitch...')
         path = self.find_path(int(self.places['mine']['room_id']))
         self.dash(path)
         self.take('golden snitch')
@@ -355,15 +363,15 @@ class GamePlayer:
 
     def coin_dash(self) -> None:
         """Dash to the well, then the mine, mine a coin."""
-        print('Going to wishing well...')
+        print('\nGoing to wishing well...\n')
         path = self.find_path(int(self.places['well']['room_id']))
         self.dash(path)
-        print('Got to the wishing well.')
+        print('\nGot to the wishing well.')
         self.wish()
-        print('Going to the mine...')
+        print('\nGoing to the mine...')
         path = self.find_path(int(self.places['mine']['room_id']))
         self.dash(path)
-        print('Got to the mine.')
+        print('\nGot to the mine.')
         self.proof()
 
     def play(self) -> None:
@@ -372,9 +380,6 @@ class GamePlayer:
          Do it forever.
          """
         while True:
-            # Go to a random rooms to collect treasure until you can carry no more.
-            if not self.encumbered:
-                self.rand_room()
             # Change name if not already done.
             if self.places['pirate']['room_id'] and not self.name_changed and self.gold >= 1000:
                 self.name_change()
@@ -387,64 +392,73 @@ class GamePlayer:
             # Pray at the warp shrine once.
             if self.places['warp']['room_id'] and self.name_changed and not self.warp:
                 self.to_warp()
+            # Do every loop:
+            # Sell treasure.
+            if self.encumbered and self.places['shop']['room_id']:
+                self.sell_things()
+            # Go to a random rooms to collect treasure until you can carry no more.
+            if not self.encumbered:
+                self.rand_room()
             # Go get a golden snitch.
             if self.encumbered and self.warp_:
                 self.dimensional_traveler()
             # Mine lambda a coin.
             if self.encumbered and self.places['well']['room_id'] and self.name_changed:
                 self.coin_dash()
-            # Sell treasure.
-            if self.encumbered and self.places['shop']['room_id']:
-                self.sell_things()
 
     def take(self, item: str) -> None:
         """Take <item> from current room if weight limit won't be exceeded."""
         print(f'\nYou found {item}')
-        # Get item dict.
-        item_ = self.examine(item)
         # Only get snitches in alternate dimension.
         if self.warped:
             suffix = 'api/adv/take/'
-            data = {"name": "golden snitch"}
+            data = {"name": 'golden snitch'}
             self.make_request(suffix=suffix, data=data, header=self.auth, http='post')
-            return
         if not self.warped:
-            # Get item attributes from dict.
+            # Get item dict and attributes.
+            item_ = self.examine(item)
             item_weight = int(item_['weight'])
             item_type = item_['itemtype']
             if item_type == 'TREASURE':
                 # Make sure item doesn't exceed weight limit.
                 if self.encumbrance + item_weight < self.strength:
                     self.take_n_wear(item_)
-                    return
             elif item_type != 'TREASURE':
                 if item_type == 'FOOTWEAR':
-                    # Make sure item doesn't exceed weight limit.
-                    if self.footwear and (self.encumbrance + (item_weight - self.footwear['weight']) < self.strength):
+                    if not self.footwear:
                         self.take_n_wear(item_, wear=True)
-                    elif not self.footwear:
+                    # Make sure item doesn't exceed weight limit.
+                    elif self.footwear and (self.encumbrance + (item_weight - self.footwear['weight']) < self.strength):
                         self.take_n_wear(item_, wear=True)
                 if item_type == 'BODYWEAR':
-                    # Make sure item doesn't exceed weight limit.
-                    if self.bodywear and (self.encumbrance + (item_weight - self.bodywear['weight']) < self.strength):
+                    if not self.bodywear:
                         self.take_n_wear(item_, wear=True)
-                    elif not self.bodywear:
+                    elif self.bodywear and (self.encumbrance + (item_weight - self.bodywear['weight']) < self.strength):
                         self.take_n_wear(item_, wear=True)
 
-    def take_n_wear(self, item: dict, wear: bool = False) -> dict:
+    def take_n_wear(self,
+                    item: dict,
+                    wear: bool = False) -> dict:
         """Take item, call wear() if item is wearable, add treasure to inventory."""
         suffix = 'api/adv/take/'
         data = {"name": f"{item['name']}"}
         response = self.make_request(suffix=suffix, http='post', data=data, header=self.auth)
         self.encumbrance += item['weight']
         if wear:
-            self.wear(item)
+            self.check_fit(item)
         else:
             self.items_.append(item)
         self.status()
         return response
 
     def wear(self, item: dict) -> dict:
+        suffix = 'api/adv/wear/'
+        data = {"name": item['name']}
+        response = self.make_request(suffix, data=data, header=self.auth, http='post')
+        self.update_clothes(item)
+        return response
+
+    def check_fit(self, item: dict) -> dict:
         """Put on an <item> if it makes sense to."""
         print(f'Seeing if {item["name"]} will fit.')
         if 'FOOTWEAR' in item['itemtype']:
@@ -452,24 +466,17 @@ class GamePlayer:
         elif 'BODYWEAR' in item['itemtype']:
             curr_item = self.bodywear
         # Check if we're already wearing something.
-        if curr_item is None:
-            suffix = 'api/adv/wear/'
-            data = {"name": item['name']}
-            response = self.make_request(suffix, data=data, header=self.auth, http='post')
-            self.update_clothes(item)
-            return response
+        if not curr_item:
+            self.wear(item)
         else:
             # Check if the new item is better.
             if int(curr_item['level']) < int(item['level']):
                 # Remove and drop old item, wear new item, and update attributes.
                 self.remove(curr_item['name'])
                 self.drop(curr_item['name'])
-                suffix = 'api/adv/wear/'
-                data = {"name": item['name']}
-                response = self.make_request(suffix=suffix, data=data, header=self.auth, http='post')
-                self.update_clothes(item)
-                return response
-            self.drop(item['name'])
+                self.wear(item)
+            else:
+                self.drop(item['name'])
 
     def update_clothes(self, item: dict) -> None:
         """Update instance attributes."""
@@ -559,14 +566,13 @@ class GamePlayer:
     def dash(self, path: list) -> None:
         """Use the 'dash' ability to travel straight sections in one move.
 
-        Make lists of rooms until direction changes, submit dash request, then repeat.
+        Make lists of rooms until direction changes, submit dash request, repeat.
         """
         if not path:
             return
-        suffix = 'api/adv/dash/'
-        # Path given in current -> target, reverse so we can pop current.
-        path = list(reversed(path))
         # Initialize variables.
+        suffix = 'api/adv/dash/'
+        path = list(reversed(path))  # Path given in current -> target, reverse so we can pop current.
         start = path.pop()
         start_room, start_direction = start[0], start[1]
         rooms = [start_room]  # Our current room.
@@ -584,18 +590,21 @@ class GamePlayer:
                         "num_rooms": f"{len(rooms)}",
                         "next_room_ids": f"{','.join(map(str, rooms))}"}
                 self.make_request(suffix=suffix, data=data, header=self.auth, http='post')
+                # Reset variables for new direction.
                 start_direction = new_direction
                 rooms = [new_room]
-        # Handle any remaining rooms.
+        # Handle remaining room(s).
         data = {"direction": f"{start_direction}",
                 "num_rooms": f"{len(rooms)}",
                 "next_room_ids": f"{','.join(map(str, rooms))}"}
-        self.make_request(suffix=suffix, data=data, header=self.auth, http='post')
+        new_room = self.make_request(suffix=suffix, data=data, header=self.auth, http='post')
+        self.print_status_info(new_room)
+        self.find_items(new_room)
         self.current_room = rooms[-1]
         self.status()
 
     def wish(self) -> None:
-        """Wish at a well to get a clue. Decode clue."""
+        """Wish at a well to get a clue. Save clue to disc."""
         response = self.examine('WELL')
         code = response['description'].split('\n')
         # Save code to disc.
@@ -603,15 +612,20 @@ class GamePlayer:
             for line in code[2:]:
                 f.write(line)
                 f.write('\n')
-        # Run file on CPU.
+        self.decode_clue()
+
+    def decode_clue(self) -> None:
+        """Load clue from disc to CPU for decoding."""
         cpu = CPU()
         cpu.load()
         cpu.run()
         next_string = cpu.next_room  # CPU modified to output strings to next_room attribute.
-        # Extract digits from string.
-        room = re.search(r'\d+', next_string)
+        self.room_from_clue(next_string)
+
+    def room_from_clue(self, string: str) -> None:
+        """Extract digits from <string>. Set mine room_id from code."""
+        room = re.search(r'\d+', string)
         next_room = int(room.group(0))
-        print(f'\nMine found: {next_room}')
         # Update room id.
         self.places['mine']['room_id'] = next_room
 
@@ -638,14 +652,22 @@ class GamePlayer:
         difficulty = response['difficulty']
         self.new_proof(last_proof, difficulty)
 
-    def new_proof(self, last_proof: int, difficulty: int) -> None:
+    @staticmethod
+    def is_proof(string: bytes, difficulty: int) -> bool:
+        hash_ = sha256(string).hexdigest()
+        if hash_[:difficulty] == '0' * difficulty:
+            return True
+        return False
+
+    def new_proof(self,
+                  last_proof: int,
+                  difficulty: int) -> None:
         """Generate new proof to mine new block."""
         x = 0
         print(f'Finding proof...\nlast_proof: {last_proof}, difficulty: {difficulty}')
         while True:
             string = (str(last_proof) + str(x)).encode()
-            hash_ = sha256(string).hexdigest()
-            if hash_[:difficulty] == '0' * difficulty:
+            if self.is_proof(string, difficulty):
                 print(f'Submitting proof: {x}')
                 self.mine(x)
                 break
