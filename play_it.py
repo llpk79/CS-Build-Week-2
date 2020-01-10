@@ -270,7 +270,7 @@ class GamePlayer:
         """Print out info about player and <current room>."""
         print(f'\nIn room {current_room["room_id"]}. \nCurrent cooldown: {self.cooldown}'
               f'\nInventory: {", ".join([item["name"][:-9] for item in self.items_])} '
-              f'\nPlayers in room: {", ".join(current_room["players"] if current_room["players"] else "None")} '
+              f'\nPlayers in room: {", ".join(current_room["players"]) if current_room["players"] else "None"} '
               f'\nGold: {self.gold}, Lambda Coins: {self.balance_}, Snitches: {self.snitches}'
               f'\nEncumbrance: {self.encumbrance}, Strength: {self.strength}')
 
@@ -375,7 +375,7 @@ class GamePlayer:
         self.proof()
 
     def play(self) -> None:
-        """Go to random rooms to find treasure, sell when encumbered, and pray if able, mine coins, find snitches.
+        """Go to random rooms to find treasure, sell when encumbered, pray if able, mine coins, find snitches.
 
          Do it forever.
          """
@@ -396,7 +396,7 @@ class GamePlayer:
             # Sell treasure.
             if self.encumbered and self.places['shop']['room_id']:
                 self.sell_things()
-            # Go to a random rooms to collect treasure until you can carry no more.
+            # Go to random rooms to collect treasure until you can carry no more.
             if not self.encumbered:
                 self.rand_room()
             # Go get a golden snitch.

@@ -22,9 +22,4 @@ To do:
     - `$ python`
     - `>>> from play_it import GamePlayer`
     - `>>> game = GamePlayer()`
-    - `>>> game.initialize_player()`
-    - `>>> game.load_map()`
-    
-- After loading map:
-    - `>>> game.auto_play()`
-    
+    - `>>> game.auto_play()`    
