@@ -175,9 +175,9 @@ class GamePlayer:
             open_exits = [d for d in exits if self.world[self.current_room][f'to_{d}'] is None]
             # Take the first open path.
             open_exit = open_exits[0]
-            fly = True
-            if self.world[self.current_room]['meta']['terrain'] == "CAVE":
-                fly = False
+            fly = False
+            if self.flight and self.world[self.current_room]['meta']['terrain'] != "CAVE":
+                fly = True
             new_room = self.move(open_exit, fly=fly)
             new_room_id = int(new_room['room_id'])
             # Mark new rooms and connections on our map.
@@ -227,10 +227,10 @@ class GamePlayer:
             room = next_room[0]
             direction = next_room[1]
             # Don't fly in caves!
+            fly = False
             if self.flight and self.world[room]['meta']['terrain'] != 'CAVE':
-                new_room = self.move(direction, room=room, fly=True)
-            else:
-                new_room = self.move(direction, room=room)
+                fly = True
+            new_room = self.move(direction, room=room, fly=fly)
             self.current_room = int(new_room['room_id'])
 
     def save_place(self, room: dict) -> None:
@@ -256,7 +256,7 @@ class GamePlayer:
             suffix = 'api/adv/fly/'
         new_room = self.make_request(suffix=suffix, header=self.auth, data=data, http='post')
         self.print_status_info(new_room)
-        self.save_place(new_room)
+        # self.save_place(new_room)
         self.find_items(new_room)
         return new_room
 
@@ -269,7 +269,7 @@ class GamePlayer:
     def print_status_info(self, current_room: dict) -> None:
         """Print out info about player and <current room>."""
         print(f'\nIn room {current_room["room_id"]}. \nCurrent cooldown: {self.cooldown}'
-              f'\nInventory: {", ".join([item["name"][:-9] for item in self.items_])} '
+              f'\nInventory: {", ".join([item["name"][:-9] for item in self.items_]) if self.items_ else "None"} '
               f'\nPlayers in room: {", ".join(current_room["players"]) if current_room["players"] else "None"} '
               f'\nGold: {self.gold}, Lambda Coins: {self.balance_}, Snitches: {self.snitches}'
               f'\nEncumbrance: {self.encumbrance}, Strength: {self.strength}')
@@ -282,7 +282,7 @@ class GamePlayer:
 
     def sell_things(self) -> None:
         """Move to the shop and sell all the treasure."""
-        print('\nGoing to sell this treasure.')
+        print('\nGoing to sell this treasure...')
         path = self.find_path(int(self.places['shop']['room_id']))
         if self.dash_:
             self.dash(path)
@@ -298,7 +298,7 @@ class GamePlayer:
         if self.warped:
             start, end = 500, 999
         rand_room = random.randint(start, end)
-        print(f'\nGoing to room {rand_room}.')
+        print(f'\nGoing to room {rand_room}...')
         path = self.find_path(rand_room)
         self.take_path(path)
         print(f'\nGot to room {rand_room}.')
@@ -571,13 +571,11 @@ class GamePlayer:
         if not path:
             return
         # Initialize variables.
-        suffix = 'api/adv/dash/'
-        path = list(reversed(path))  # Path given in current -> target, reverse so we can pop current.
+        path = list(reversed(path))
         start = path.pop()
         start_room, start_direction = start[0], start[1]
         rooms = [start_room]  # Our current room.
         while path:
-            # Get next room on path.
             new = path.pop()
             new_room = new[0]
             new_direction = new[1]
@@ -586,22 +584,34 @@ class GamePlayer:
                 rooms.append(new_room)
             # Otherwise, create dash request.
             else:
-                data = {"direction": f"{start_direction}",
-                        "num_rooms": f"{len(rooms)}",
-                        "next_room_ids": f"{','.join(map(str, rooms))}"}
-                self.make_request(suffix=suffix, data=data, header=self.auth, http='post')
+                self.smart_dash(rooms, start_direction)
                 # Reset variables for new direction.
                 start_direction = new_direction
                 rooms = [new_room]
         # Handle remaining room(s).
-        data = {"direction": f"{start_direction}",
-                "num_rooms": f"{len(rooms)}",
-                "next_room_ids": f"{','.join(map(str, rooms))}"}
-        new_room = self.make_request(suffix=suffix, data=data, header=self.auth, http='post')
-        self.print_status_info(new_room)
-        self.find_items(new_room)
-        self.current_room = rooms[-1]
+        room, dashed = self.smart_dash(rooms, start_direction)
+        self.current_room = room['room_id']
+        if dashed:
+            self.print_status_info(room)
+        self.find_items(room)
         self.status()
+
+    def smart_dash(self,
+                   rooms: list,
+                   start_direction: str) -> dict:
+        """Dash isn't very fast for short runs. Fly for runs under 3 rooms."""
+        suffix = 'api/adv/dash/'
+        dashed = False
+        if len(rooms) > 2:
+            dashed = True
+            data = {"direction": f"{start_direction}",
+                    "num_rooms": f"{len(rooms)}",
+                    "next_room_ids": f"{','.join(map(str, rooms))}"}
+            new_room = self.make_request(suffix=suffix, data=data, header=self.auth, http='post')
+        else:
+            for room in rooms:
+                new_room = self.move(start_direction, room, fly=True)
+        return new_room, dashed
 
     def wish(self) -> None:
         """Wish at a well to get a clue. Save clue to disc."""
@@ -623,7 +633,7 @@ class GamePlayer:
         self.room_from_clue(next_string)
 
     def room_from_clue(self, string: str) -> None:
-        """Extract digits from <string>. Set mine room_id from code."""
+        """Extract digits from <string>. Set mine room_id."""
         room = re.search(r'\d+', string)
         next_room = int(room.group(0))
         # Update room id.
@@ -654,6 +664,7 @@ class GamePlayer:
 
     @staticmethod
     def is_proof(string: bytes, difficulty: int) -> bool:
+        """Check that <string> meets proof criteria."""
         hash_ = sha256(string).hexdigest()
         if hash_[:difficulty] == '0' * difficulty:
             return True
